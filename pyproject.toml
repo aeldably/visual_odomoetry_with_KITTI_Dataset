@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "pandas"
+version = "1.4"
+description = ""
+authors = ["Your Name <you@example.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+numpy = "^1.22.3"
+opencv-python = "^4.5.5"
+tqdm = "^4.64.0"
+
+[tool.poetry.dev-dependencies]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
