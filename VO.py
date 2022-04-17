@@ -1,3 +1,4 @@
+from cv2 import transform
 import pandas as pd
 import numpy as np
 import os
@@ -30,7 +31,7 @@ class VisualOdometry:
             params = np.fromstring(f.readline(), dtype=np.float64, sep = ' ')
             p = np.reshape(params, (3, 4))
             k = p[:3, :3]
-        return p, k
+        return k, p
 
     @staticmethod
     def _load_poses(filepath):
@@ -78,4 +79,91 @@ class VisualOdometry:
         q1 = np.float32([keypoints1[m.queryIdx].t for m in good])
         q2 = np.float32([keypoints2[m.queryIdx].t for m in good])
 
-        draw_params = dict(matchColor)
+        draw_params = dict(matchColor = -1,singlePointColor = None, matchMask = None, flags = 2)
+
+        img3 = cv2.drawMatches(self.images[i], keypoints1, self.images[i-1], keypoints2, good, None, **draw_params)
+        cv2.imshow("image", img3)
+        cv2.waitKey(750)
+
+        return q1, q2
+
+    def get_poses(self, q1, q2):
+        """
+        """
+        Essential, mask = cv2.findEssentialMat(q1, q2, self.k)
+
+        R, t = self.decomp_essential_matrix(Essential, q1, q2)
+
+        return self._from_transf(R, t)
+
+    def decomp_essential_matrix(self, E, q1, q2):
+        """
+        """
+        R1, R2, t = cv2.decomposeEssentialMat(E)
+        T1 = self._from_transf(R1, np.ndarray.flatten(t))
+        T2 = self._from_transf(R2, np.ndarray.flatten(t))
+        T3 = self._from_transf(R1, np.ndarray.flatten(-t))
+        T4 = self._from_transf(R2, np.ndarray.flatten(-t))
+
+        transformations = [T1, T2, T3, T4]
+
+        K = np.concatenate((self.k, np.zeros((3,1))), axis=1)
+
+        projections = [ K @ T1, K @ T2, K @ T3, K @ T4]
+
+        np.set_printoptions(suppress=True)
+
+        positives = []
+
+        for p, t in zip(projections, transformations):
+            hom_q1 = cv2.triangulatePoints(self.p, q1.T, q2.T)
+            hom_q2 = T @ hom_q1
+
+            Q1 = hom_q1[:3, :] / hom_q1[3, :]
+            Q2 = hom_q2[:3, :] / hom_q2[3, :]
+
+            total_sum = sum(Q2[2, :] > 0) + sum (Q1[2, :] > 0)
+            relative_scale = np.mean(np.linalg.norm(Q1.T[:-1] - Q1.T[1:], axis=-1) /
+                                     np.linalg.norm(Q2.T[:-1] - Q2.T[1:], axis=-1)
+                                     )
+            
+            positives.append(total_sum + relative_scale)
+
+            max = np.argmax(positives)
+
+            if (max == 2):
+                return R1, np.ndarray.flatten(-t)
+            elif (max == 3):
+                return R2, np.ndarray.flatten(-t)
+            elif (max == 0):
+                return R1, np.ndarray.flatten(t)
+            elif (max == 1):
+                return R2, np.ndarray.flatten(t)
+
+
+def main():
+
+    data_dir = "datasets/KITTI_sequence_1"
+    vo = VisualOdometry(data_directory=data_dir)
+
+    gt_path =[]
+    estimated_path = []
+
+    for i, gt_pose in enumerate(tqdm(vo.get_poses, unit="pose")):
+        if i == 0:
+            cur_pose = gt_pose
+        else:
+            q1, q2, = vo.get_matches(i)
+            transf = vo.get_poses(q1,q2)
+            cur_pose = np.matmul(cur_pose, np.linalg.inv(transf))
+            print("\nGround truth pose:\n" + str(gt_pose))
+            print("\n Current pose:\n" + str(gt_pose))
+            print("The current pose usde x, y: \n" + str(cur_pose[0, 3]) + str(cur_pose[2,3])) 
+        gt_path.append((gt_pose[0, 3], gt_pose[2, 3]))
+        estimated_path.append((cur_pose[0, 3], cur_pose[2, 3]))
+    plotting.visualize_paths(gt_path, estimated_path, "visual odometry", file_out=os.path.basename(data_dir))
+
+
+if __name__ == "__main__":
+    main()
+
